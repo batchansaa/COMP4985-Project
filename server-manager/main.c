@@ -8,6 +8,16 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+// compile with: gcc -o main main.c -lncurses
+
+// Define the maximum length of a message
+#define MAX_MESSAGE_LENGTH 1024
+
+struct NetworkMessage {
+    uint8_t version;
+    uint16_t length;
+    char *message;
+};
 
 bool checkIPAddress(char *ipAddress) {
     /**
@@ -49,7 +59,7 @@ int connectToServer(char *ipAddress, int portNumber) {
     }
 
     // Connection successful
-    return 0;
+    return sockfd;
 }
 
 char *getInput() {
@@ -81,13 +91,16 @@ char *getInput() {
 }
    
 void printMenu() {
-    printw("1. Connect to server\n");
-    printw("2. Disconnect from server\n");
-    printw("3. Send a message to the server\n");
-    printw("4. Receive a message from the server\n");
-    printw("5. Exit\n");
-    printw("Enter your choice: ");
+    printw("1. Connect to server\n");           
+    printw("2. Disconnect from server\n");      
+    printw("3. Send a message to the server\n"); 
+    printw("4. Receive a message from the server\n"); 
+    printw("5. Exit\n");                    
+    printw("Enter your choice: ");    
 }
+
+
+
 
 int main() {
     // Initialize NCurses
@@ -95,6 +108,7 @@ int main() {
     cbreak();   // Line buffering disabled, Pass on every character
     noecho();   // Don't echo while we do getch
     keypad(stdscr, TRUE); // Enable keypad input
+    int sockfd;
 
     // Print a message and wait for user input
     printw("COMP 4985 Project: Server Manager Program\n");
@@ -117,20 +131,35 @@ int main() {
 
     while (true) {
         printMenu();
-        int choice = getch() - '0';
+        int choice = getInput()[0] - '0';
         printw("%d\n", choice);
         refresh();
         switch (choice) {
             case 1:
-                if (connectToServer(ipAddress, portNumber) == 0) {
+                sockfd = connectToServer(ipAddress, portNumber);
+                if (sockfd != 0) {
                     printw("Connected to server at %s:%d\n", ipAddress, portNumber);
-                    // handle server here
+                    printw("Enter the password for the server: ");
+                    char *password = getInput();
+                    if (send(sockfd, password, strlen(password), 0) < 0) {
+                        perror("Error sending message");
+                        exit(EXIT_FAILURE);
+                    } else {
+                        printw("Password sent successfully\n");
+                    }
                 } else {
                     printw("Failed to connect to server at %s:%d\n", ipAddress, portNumber);
                 }
                 break;
             case 2:
                 printw("Disconnecting from server...\n");
+                if (send(sockfd, "/q", 4, 0) < 0) {
+                    perror("Error sending message");
+                    exit(EXIT_FAILURE);
+                } else {
+                    close(sockfd);
+                    printw("Disconnected from server\n");
+                }
                 break;
             case 3:
                 printw("Enter the message to send: ");
@@ -139,14 +168,22 @@ int main() {
                 break;
             case 4:
                 printw("Receiving message from server...\n");
+                if (recv(sockfd, message, MAX_MESSAGE_LENGTH, 0) < 0) {
+                    perror("Error receiving message");
+                    exit(EXIT_FAILURE);
+                } else {
+                    printw("Received message: %s\n", message);
+                }
                 break;
             case 5:
                 printw("Exiting...\n");
+                close(sockfd);
+                printw("Disconnected from server\n");
+                endwin();
                 break;
             default:
                 printw("Invalid choice\n");
         }
-        refresh();
     }
 
     // Wait for a key press before exiting
