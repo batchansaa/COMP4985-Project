@@ -1,64 +1,146 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
+#include <unistd.h>
 
-#define BUFFER_SIZE 1024
-#define ERROR_MSG "Error in socket creation\n"
+#define PORT 8000
 
-int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <IP address> <port number>\n", argv[0]);
-        return 1;
+typedef struct {
+    uint8_t version;
+    uint16_t length;
+    char* content;
+} Packet;
+
+Packet receivePacket(int client_socket) {
+    Packet packet;
+
+    // Receive version
+    if (recv(client_socket, &packet.version, sizeof(packet.version), 0) == -1) {
+        perror("Receive version failed");
+        exit(EXIT_FAILURE);
     }
 
-    char *ip_address = argv[1];
-    int port_number = atoi(argv[2]);
+    // Receive length
+    if (recv(client_socket, &packet.length, sizeof(packet.length), 0) == -1) {
+        perror("Receive length failed");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("Received length: %d\n", packet.length);
+    }
 
-    int sockfd, newsockfd, client_len;
-    struct sockaddr_in serv_addr, client_addr;
-    char buffer[BUFFER_SIZE];
+    // Allocate memory for content
+    packet.content = (char *)malloc(packet.length * sizeof(char));
+
+    // Receive content
+    if (recv(client_socket, packet.content, packet.length, 0) == -1) {
+        perror("Receive content failed");
+        exit(EXIT_FAILURE);
+    } else {
+        printf("Received content: %s\n", packet.content);
+    }
+
+    return packet;
+}
+
+void sendPacket(int client_socket, char* content) {
+    Packet packet;
+    packet.version = 1;
+    packet.content = content;
+    packet.length = strlen(packet.content);
+
+    // Send version
+    if (send(client_socket, &packet.version, sizeof(packet.version), 0) == -1) {
+        perror("Send version failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Send length
+    if (send(client_socket, &packet.length, sizeof(packet.length), 0) == -1) {
+        perror("Send length failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Send content
+    if (send(client_socket, packet.content, packet.length, 0) == -1) {
+        perror("Send content failed");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void handleClient(int client_socket) {
+    Packet packet;
+
+    // Receive password packet
+    packet = receivePacket(client_socket);
+    char *password = packet.content;
+    sendPacket(client_socket, "ACCEPTED");
+
+    while (1) {
+        
+        // Receive message packet
+        packet = receivePacket(client_socket);
+        if (strcmp(packet.content, "/s") == 0) {
+            sendPacket(client_socket, "STARTED");
+        } else if (strcmp(packet.content, "/q") == 0) {
+            sendPacket(client_socket, "STOPPED");
+            break;
+        } else {
+            sendPacket(client_socket, "UNKNOWN COMMAND");
+        }
+    }
+}
+
+int main() {
+    int sockfd, newsockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t client_len;
 
     // Create socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror(ERROR_MSG);
-        return 1;
+    if (sockfd == -1) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
     }
 
-    // Initialize server address struct
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr(ip_address);
-    serv_addr.sin_port = htons(port_number);
+    // Set up server address
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
 
-    // Bind socket to address and port
-    if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Error in binding");
-        return 1;
+    // Bind socket
+    if (bind(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
+        perror("Bind failed");
+        exit(EXIT_FAILURE);
     }
 
     // Listen for connections
-    listen(sockfd, 5);
-    printf("Server listening on %s:%d\n", ip_address, port_number);
-
-    // Accept incoming connections
-    client_len = sizeof(client_addr);
-    newsockfd = accept(sockfd, (struct sockaddr *)&client_addr, (socklen_t *)&client_len);
-    if (newsockfd < 0) {
-        perror("Error in accepting connection");
-        return 1;
+    if (listen(sockfd, 5) == -1) {
+        perror("Listen failed");
+        exit(EXIT_FAILURE);
     }
 
-    // Read and write data
-    memset(buffer, 0, BUFFER_SIZE);
-    read(newsockfd, buffer, BUFFER_SIZE);
-    printf("Message from client: %s\n", buffer);
+    printf("Server listening on port %d...\n", PORT);
 
-    close(newsockfd);
+    while (1) {
+        // Accept incoming connection
+        client_len = sizeof(client_addr);
+        newsockfd = accept(sockfd, (struct sockaddr *)&client_addr, &client_len);
+        if (newsockfd == -1) {
+            perror("Accept failed");
+            exit(EXIT_FAILURE);
+        }
+
+        // Handle client request
+        handleClient(newsockfd);
+
+        // Close client socket
+        close(newsockfd);
+    }
+
+    // Close server socket
     close(sockfd);
 
     return 0;
