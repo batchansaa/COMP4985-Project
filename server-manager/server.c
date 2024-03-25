@@ -1,11 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
 
-#define PORT 8000
+#define PORT 8080
+#define DIAGNOSTIC_INTERVAL 5
 
 typedef struct {
     uint8_t version;
@@ -44,11 +46,30 @@ Packet receivePacket(int client_socket) {
     return packet;
 }
 
+// void sendDiagnosticData(int sockfd) {
+//     while (true) {
+//         // Create and send the diagnostic packet
+//         Packet packet;
+//         packet.version = 1;
+//         packet.content = "Diagnostic data...";
+//         packet.length = strlen(packet.content);
+
+//         send(sockfd, &packet, sizeof(Packet), 0);
+//         printf("Sent diagnostic data: %s\n", packet.content);
+
+//         // Sleep for the specified interval
+//         sleep(DIAGNOSTIC_INTERVAL);
+//     }
+// }
+
 void sendPacket(int client_socket, char* content) {
     Packet packet;
     packet.version = 1;
     packet.content = content;
     packet.length = strlen(packet.content);
+
+    printf("Sending packet with content: %s\n", packet.content);
+    printf("Sending packet with length: %d\n", packet.length);
 
     // Send version
     if (send(client_socket, &packet.version, sizeof(packet.version), 0) == -1) {
@@ -76,16 +97,17 @@ void handleClient(int client_socket) {
     packet = receivePacket(client_socket);
     char *password = packet.content;
     sendPacket(client_socket, "ACCEPTED");
+    // sendDiagnosticData(client_socket);
 
     while (1) {
         
         // Receive message packet
+        printf("Waiting for command...\n");
         packet = receivePacket(client_socket);
         if (strcmp(packet.content, "/s") == 0) {
             sendPacket(client_socket, "STARTED");
         } else if (strcmp(packet.content, "/q") == 0) {
             sendPacket(client_socket, "STOPPED");
-            break;
         } else {
             sendPacket(client_socket, "UNKNOWN COMMAND");
         }
