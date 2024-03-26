@@ -12,12 +12,7 @@
 
 // Define the maximum length of a message
 #define MAX_MESSAGE_LENGTH 1024
-
-struct NetworkMessage {
-    uint8_t version;
-    uint16_t length;
-    char *message;
-};
+#define CURRENT_VERSION 1
 
 bool checkIPAddress(char *ipAddress) {
     /**
@@ -92,15 +87,53 @@ char *getInput() {
    
 void printMenu() {
     printw("1. Connect to server\n");           
-    printw("2. Disconnect from server\n");      
-    printw("3. Send a message to the server\n"); 
-    printw("4. Receive a message from the server\n"); 
-    printw("5. Exit\n");                    
+    printw("2. Start the server\n");      
+    printw("3. Stop the server\n"); 
+    printw("4. Exit the program\n");                    
     printw("Enter your choice: ");    
 }
 
+int sendMessage(int sockfd, char *message) {
+    int version = htonl(CURRENT_VERSION); // Convert version to network byte order
+    int version_size = sizeof(version);
+    int content_size = strlen(message);
+    uint16_t content_size_nbo = htons((uint16_t)content_size); // Convert content size to network byte order
 
+    // Send version, version size, content size, and message
+    // if (send(sockfd, &version, version_size, 0) != version_size) {
+    //     fprintf(stderr, "Error sending version\n");
+    //     return -1;
+    // }
 
+    // if (send(sockfd, &content_size_nbo, sizeof(uint16_t), 0) != sizeof(uint16_t)) {
+    //     fprintf(stderr, "Error sending content size\n");
+    //     return -1;
+    // }
+
+    // if (send(sockfd, message, content_size, 0) != content_size) {
+    //     fprintf(stderr, "Error sending message\n");
+    //     return -1;
+    // }
+
+    for (int i = 0; i < 3; i++) {
+        char packet[1024];
+        snprintf(packet, sizeof(packet), "Packet %d", i+1);
+        send(sockfd, packet, strlen(packet), 0);
+    }
+
+    return 0; // Message sent successfully
+}
+
+// char* receiveMessage(int sockfd) {
+//     char message[MAX_MESSAGE_LENGTH];
+//     int version = recv(sockfd, CURRENT_VERSION, sizeof(CURRENT_VERSION), 0);
+//     int content_size = recv(sockfd, sizeof(uint16_t), sizeof(uint16_t), 0);
+//     int content = recv(sockfd, message, MAX_MESSAGE_LENGTH, 0);
+//     if (version + content_size + content < 0) {
+//         perror("Error receiving message");
+//     }
+//     return message;
+// }
 
 int main() {
     // Initialize NCurses
@@ -131,6 +164,13 @@ int main() {
 
     while (true) {
         printMenu();
+        if (sockfd != 0) {
+            printw("Connected to server\n");
+            // while (true) {
+            //     char *message = receiveMessage(sockfd);
+            //     printw("Status: %s\n", message);
+            // }
+        }
         int choice = getInput()[0] - '0';
         printw("%d\n", choice);
         refresh();
@@ -141,42 +181,48 @@ int main() {
                     printw("Connected to server at %s:%d\n", ipAddress, portNumber);
                     printw("Enter the password for the server: ");
                     char *password = getInput();
-                    if (send(sockfd, password, strlen(password), 0) < 0) {
+                    printw("Password: %s\n", password);
+                    int sent = send(sockfd, password, strlen(password), 0);
+                    if (sent < 0) {
                         perror("Error sending message");
                         exit(EXIT_FAILURE);
                     } else {
-                        printw("Password sent successfully\n");
+                        printw("\nPassword sent successfully\n");
                     }
                 } else {
                     printw("Failed to connect to server at %s:%d\n", ipAddress, portNumber);
                 }
                 break;
             case 2:
-                printw("Disconnecting from server...\n");
-                if (send(sockfd, "/q", 4, 0) < 0) {
+                printw("Starting server...\n");
+                if (sockfd == 0) {
+                    printw("Not connected to server\n");
+                    break;
+                }
+                if (send(sockfd, "/s", 2, 0)< 0) {
                     perror("Error sending message");
                     exit(EXIT_FAILURE);
                 } else {
                     close(sockfd);
-                    printw("Disconnected from server\n");
+                    printw("Started server.\n");
                 }
                 break;
             case 3:
-                printw("Enter the message to send: ");
-                char *message = getInput();
-                printw("\nYou entered: %s\n", message);
-                break;
-            case 4:
-                printw("Receiving message from server...\n");
-                if (recv(sockfd, message, MAX_MESSAGE_LENGTH, 0) < 0) {
-                    perror("Error receiving message");
+                printw("Quitting server...\n");
+                if (sockfd == 0) {
+                    printw("Not connected to server\n");
+                    break;
+                }
+                if (sendMessage(sockfd, "/q") < 0) {
+                    perror("Error sending message");
                     exit(EXIT_FAILURE);
                 } else {
-                    printw("Received message: %s\n", message);
+                    close(sockfd);
+                    printw("Stopped server.\n");
                 }
                 break;
-            case 5:
-                printw("Exiting...\n");
+            case 4:
+                printw("Exiting the program...\n");
                 close(sockfd);
                 printw("Disconnected from server\n");
                 endwin();

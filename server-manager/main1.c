@@ -7,10 +7,12 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
+#include <pthread.h>
 
 #define MAX_MESSAGE_LENGTH 1024
 #define CURRENT_VERSION 1
+
+//TODO: Create a thread for continuously receiving messages from the server (diagnostic data)
 
 typedef struct {
     char* ipAddress;
@@ -24,15 +26,53 @@ typedef struct {
 } Packet;
 
 bool checkIPAddress(char *ipAddress);
+bool verifyMessageFormat(Packet packet);
 void sendToServer(int sockfd, char *message);
-Packet receiveFromServer(int sockfd);
 int connectToServer(char *ipAddress, int portNumber);
-void startServer(int sockfd);
-void stopServer(int sockfd);
+bool startServer(int sockfd);
+bool stopServer(int sockfd);
 char* getInput();
 void printMenu();
-ServerInfo get_socket_information();
+Packet receiveFromServer(int sockfd);
+ServerInfo getSocketInformation();
 
+// void printDiagnosticData(void* arg) {
+//     /**
+//      * Print the diagnostic data from the server
+//     */
+//     int sockfd = *((int*)arg);
+//     bool serverRunning = true;
+//     while (serverRunning) {
+//         Packet packet = receiveFromServer(sockfd);
+//         // Process the received packet or perform diagnostic data handling here
+//         // For example:
+//         if (verifyMessageFormat(packet)) {
+//             printw("Received diagnostic data: %s\n", packet.content);
+//         }
+//     }
+//     pthread_exit(NULL);
+// }
+
+bool verifyMessageFormat(Packet packet) {
+    /**
+     * Verify that the message is in the correct format
+     * @param packet: The packet to verify
+     * @return: True if the message is in the correct format, False otherwise
+    */
+    printw("Verifying message format...\n");
+    printw("Version: %d\n", packet.version);
+    printw("Content Length: %d\n", packet.contentLength);
+    printw("Content: %s\n", packet.content);
+
+    if ((packet.version == CURRENT_VERSION) && 
+        (packet.contentLength <= MAX_MESSAGE_LENGTH) &&
+        (packet.contentLength == strlen(packet.content)) &&
+        (packet.content != NULL)) {
+        return true;
+    } else {
+        return false;
+    }
+}
 
 bool checkIPAddress(char *ipAddress) {
     /**
@@ -41,8 +81,8 @@ bool checkIPAddress(char *ipAddress) {
      * @return: True if the string is a valid IP address, False otherwise
     */
 
-    struct sockaddr_in sa;
-    return inet_pton(AF_INET, ipAddress, &(sa.sin_addr)) != 0;
+    struct sockaddr_in socketAddress;
+    return inet_pton(AF_INET, ipAddress, &(socketAddress.sin_addr)) != 0;
 }
 
 void sendToServer(int sockfd, char *message) {
@@ -77,21 +117,27 @@ Packet receiveFromServer(int sockfd) {
     uint8_t version;
     uint16_t contentLength;
 
+    printw("Receiving packet...\n");
+
+
     // Receive the version packet
     if (recv(sockfd, &version, sizeof(version), 0) <= 0) {
-        perror("recv");
+        printw("Error receiving version packet\n");
+        perror("recv11");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
     packet.version = version;
+    printw("Version: %d\n", packet.version);
 
     // Receive the content length packet
     if (recv(sockfd, &contentLength, sizeof(contentLength), 0) <= 0) {
-        perror("recv");
+        perror("recv22");
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    packet.contentLength = ntohs(contentLength);
+    packet.contentLength = contentLength;
+    printw("Content Length: %d\n", packet.contentLength);
 
     // Allocate memory for the content
     packet.content = (char *)malloc(packet.contentLength + 1);
@@ -100,10 +146,11 @@ Packet receiveFromServer(int sockfd) {
         close(sockfd);
         exit(EXIT_FAILURE);
     }
+    printw("Content: %s\n", packet.content);
 
     // Receive the content packet
     if (recv(sockfd, packet.content, packet.contentLength, 0) <= 0) {
-        perror("recv");
+        perror("recv33");
         close(sockfd);
         free(packet.content);
         exit(EXIT_FAILURE);
@@ -146,39 +193,44 @@ int connectToServer(char *ipAddress, int portNumber) {
     char *password = getInput();
     sendToServer(sockfd, password);
     Packet packet = receiveFromServer(sockfd);
-    if (strcmp(packet.content, "ACCEPTED") == 0) {
-        printw("Password accepted\n");
-    } else {
-        printw("Password rejected\n");
+    if (!verifyMessageFormat(packet)) {
+        printw("Invalid message format\n");
+        return 0;
     }
-
-    // Connection successful
     if (strcmp(packet.content, "ACCEPTED") == 0) {
+        printw("\nPassword accepted\n");
         return sockfd;
     } else {
+        printw("Password rejected\n");
         return 0;
     }
 }
 
-void startServer(int sockfd) {
+bool startServer(int sockfd) {
     /**
      * Start the server
      * @param sockfd: The socket file descriptor
     */
 
-    // Send the start server command
+    printw("\nHELLO");
     sendToServer(sockfd, "/s");
 
     // Receive the server status
     Packet packet = receiveFromServer(sockfd);
+    if (!verifyMessageFormat(packet)) {
+        printw("Invalid message format\n");
+        return false;
+    }
     if (strcmp(packet.content, "STARTED") == 0) {
         printw("Server started successfully\n");
+        return true;
     } else {
         printw("Server failed to start\n");
+        return false;
     }
 }
 
-void stopServer(int sockfd) {
+bool stopServer(int sockfd) {
     /**
      * Stop the server
      * @param sockfd: The socket file descriptor
@@ -189,32 +241,41 @@ void stopServer(int sockfd) {
 
     // Receive the server status
     Packet packet = receiveFromServer(sockfd);
+    if (!verifyMessageFormat(packet)) {
+        printw("Invalid message format\n");
+        return true;
+    }
     if (strcmp(packet.content, "STOPPED") == 0) {
         printw("Server stopped successfully\n");
+        return false;
     } else {
         printw("Server failed to stop\n");
+        return true;
     }
 }
 
 char* getInput() {
+    /**
+     * Get input from the user
+     * @return: The input string
+    */
     char *input = (char *)malloc(100 * sizeof(char));
+    if (input == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
     int index = 0;
     int ch;
-    int y, x;
-    getyx(stdscr, y, x);
 
     while ((ch = getch()) != '\n') {
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) { // Backspace or Delete
             if (index > 0) {
                 index--;
-                move(y, x+index);
-                // Replace character with space
-                addch(' ');
-                move(y, x+index); // Move cursor back to the correct position
+                printw("\b \b"); // Move cursor back, print space, move back again (backspace effect)
                 refresh();
-
             }
-        } else if (index < 100) { // Normal character
+        } else if (index < 99) { // Limit input to avoid buffer overflow
             input[index++] = ch;
             printw("%c", ch); // Echo the character back to the screen
             refresh();
@@ -225,6 +286,9 @@ char* getInput() {
 }
 
 void printMenu() {
+    /**
+     * Print the menu options
+    */
     printw("1. Connect to server\n");           
     printw("2. Start the server\n");      
     printw("3. Stop the server\n"); 
@@ -232,7 +296,11 @@ void printMenu() {
     printw("Enter your choice: ");    
 }
 
-ServerInfo get_socket_information() {
+ServerInfo getSocketInformation() {
+    /**
+     * Get the IP address and port number of the server
+     * @return: The server information
+    */
     char *ipAddress;
     char *portNumberStr;
     int portNumber;
@@ -262,23 +330,29 @@ int main() {
     cbreak();   // Line buffering disabled, Pass on every character
     noecho();   // Don't echo while we do getch
     keypad(stdscr, TRUE); // Enable keypad input
-    int sockfd;
+    int sockfd = 0;
     char *ipAddress;
     int portNumber;
     ServerInfo serverInfo;
+    bool running = true;
+    bool serverRunning = false;
 
-    // Print a message and wait for user input
     printw("COMP 4985 Project: Server Manager Program\n");
     
-    serverInfo = get_socket_information();
+    serverInfo = getSocketInformation();
     ipAddress = serverInfo.ipAddress;
     portNumber = serverInfo.portNumber;
 
-    while (true) {
+    // pthread_t listenThread;
+    // if (pthread_create(&listenThread, NULL, (void* (*)(void*))printDiagnosticData, (void*)&sockfd) != 0) {
+    //     perror("pthread_create");
+    //     exit(EXIT_FAILURE);
+    // }   
+
+    while (running) {
         printMenu();
         int choice = getInput()[0] - '0';
         printw("\n%d\n", choice);
-        refresh();
 
         switch(choice) {
             case 1:
@@ -289,28 +363,36 @@ int main() {
                 printw("Starting the server...\n");
                 if (sockfd == 0) {
                     printw("Please connect to the server first\n");
+                } else if (serverRunning) {
+                    printw("The server is already running\n");
                 } else {
-                    startServer(sockfd);
+                    serverRunning = startServer(sockfd);
                 }
                 break;
             case 3:
                 printw("Stopping the server...\n");
                 if (sockfd == 0) {
                     printw("Please connect to the server first\n");
-                } else {
-                    stopServer(sockfd);
+                } else if (!serverRunning) {
+                    printw("The server is already stopped\n");
+                } 
+                else {
+                    serverRunning = stopServer(sockfd);
                 }
                 break;
             case 4:
                 printw("Exiting the program...\n");
                 close(sockfd);
+                sockfd = 0;
                 free(ipAddress);
+                running = false;
                 break;
             default:
                 printw("Invalid choice\n");
         }
     }
 
+    printw("Press any key to exit...\n");
     getch();
     endwin();
     return 0;
