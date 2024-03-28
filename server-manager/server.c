@@ -46,21 +46,21 @@ Packet receivePacket(int client_socket) {
     return packet;
 }
 
-// void sendDiagnosticData(int sockfd) {
-//     while (true) {
-//         // Create and send the diagnostic packet
-//         Packet packet;
-//         packet.version = 1;
-//         packet.content = "Diagnostic data...";
-//         packet.length = strlen(packet.content);
+void sendDiagnosticData(int sockfd) {
+    while (true) {
+        // Create and send the diagnostic packet
+        Packet packet;
+        packet.version = 1;
+        packet.content = "Diagnostic data...";
+        packet.length = strlen(packet.content);
 
-//         send(sockfd, &packet, sizeof(Packet), 0);
-//         printf("Sent diagnostic data: %s\n", packet.content);
+        send(sockfd, &packet, sizeof(Packet), 0);
+        printf("Sent diagnostic data: %s\n", packet.content);
 
-//         // Sleep for the specified interval
-//         sleep(DIAGNOSTIC_INTERVAL);
-//     }
-// }
+        // Sleep for the specified interval
+        sleep(DIAGNOSTIC_INTERVAL);
+    }
+}
 
 void sendPacket(int client_socket, char* content) {
     Packet packet;

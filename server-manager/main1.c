@@ -11,8 +11,11 @@
 
 #define MAX_MESSAGE_LENGTH 1024
 #define CURRENT_VERSION 1
+#define BUFFER_SIZE 100
 
 //TODO: Create a thread for continuously receiving messages from the server (diagnostic data)
+
+//compile with gcc -o main main1.c -lncurses
 
 typedef struct {
     char* ipAddress;
@@ -25,6 +28,10 @@ typedef struct {
     char *content;
 } Packet;
 
+struct ThreadArgs {
+    int sockfd;
+};
+
 bool checkIPAddress(char *ipAddress);
 bool verifyMessageFormat(Packet packet);
 void sendToServer(int sockfd, char *message);
@@ -36,22 +43,48 @@ void printMenu();
 Packet receiveFromServer(int sockfd);
 ServerInfo getSocketInformation();
 
-// void printDiagnosticData(void* arg) {
-//     /**
-//      * Print the diagnostic data from the server
-//     */
-//     int sockfd = *((int*)arg);
-//     bool serverRunning = true;
-//     while (serverRunning) {
-//         Packet packet = receiveFromServer(sockfd);
-//         // Process the received packet or perform diagnostic data handling here
-//         // For example:
-//         if (verifyMessageFormat(packet)) {
-//             printw("Received diagnostic data: %s\n", packet.content);
+// continuously receive messages from the server
+
+// void *receiveMessages(void *arg) {
+//     struct ThreadArgs *args = (struct ThreadArgs *)arg;
+//     int sockfd = args->sockfd;
+    
+//     // Now you can use sockfd in the thread as needed
+//     // Implement the receiveMessages functionality here
+//     while (1) {
+//         // Receive packet or message from the server
+//         Packet packet;
+//         int bytes_received = recv(sockfd, packet.content, BUFFER_SIZE, 0);
+//         if (bytes_received < 0) {
+//             perror("Error receiving data from server");
+//             break;
+//         } else if (bytes_received == 0) {
+//             printf("Server disconnected\n");
+//             break;
+//         } else {
+//             // Verify message format if needed
+//             printf("Received message: %s\n", packet.content);
 //         }
 //     }
 //     pthread_exit(NULL);
 // }
+
+void receiveMessages(int sockfd) {
+    /**
+     * Receive messages from the server
+     * @param sockfd: The socket file descriptor
+    */
+    while (1) {
+        Packet packet = receiveFromServer(sockfd);
+        if (!verifyMessageFormat(packet)) {
+            printw("Invalid message format\n");
+            break;
+        } 
+        printw("Received message: %s\n", packet.content);
+        refresh();
+    }
+}
+
 
 bool verifyMessageFormat(Packet packet) {
     /**
@@ -101,7 +134,7 @@ void sendToServer(int sockfd, char *message) {
     send(sockfd, &version_packet, sizeof(version_packet), 0);
 
     // Create the content length packet
-    uint16_t content_length_packet = strlen(message);
+    uint16_t content_length_packet = htons(strlen(message));
     send(sockfd, &content_length_packet, sizeof(content_length_packet), 0);
 
     // Create the content packet
@@ -126,19 +159,21 @@ Packet receiveFromServer(int sockfd) {
         perror("recv11");
         close(sockfd);
         exit(EXIT_FAILURE);
+    } else {
+        packet.version = ntohs(version);
+        printw("Version: %d\n", packet.version);
     }
-    packet.version = version;
-    printw("Version: %d\n", packet.version);
-
+    
     // Receive the content length packet
     if (recv(sockfd, &contentLength, sizeof(contentLength), 0) <= 0) {
         perror("recv22");
         close(sockfd);
         exit(EXIT_FAILURE);
+    } else {
+        packet.contentLength = ntohs(contentLength);
+        printw("Content Length: %d\n", packet.contentLength);
     }
-    packet.contentLength = contentLength;
-    printw("Content Length: %d\n", packet.contentLength);
-
+    
     // Allocate memory for the content
     packet.content = (char *)malloc(packet.contentLength + 1);
     if (packet.content == NULL) {
@@ -146,17 +181,18 @@ Packet receiveFromServer(int sockfd) {
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    printw("Content: %s\n", packet.content);
-
+    
     // Receive the content packet
     if (recv(sockfd, packet.content, packet.contentLength, 0) <= 0) {
         perror("recv33");
         close(sockfd);
         free(packet.content);
         exit(EXIT_FAILURE);
+    } else {
+        printw("Content: %s\n", packet.content);
+        packet.content[packet.contentLength] = '\0';
     }
-    packet.content[packet.contentLength] = '\0';
-
+    
     return packet;
 }
 
@@ -193,10 +229,10 @@ int connectToServer(char *ipAddress, int portNumber) {
     char *password = getInput();
     sendToServer(sockfd, password);
     Packet packet = receiveFromServer(sockfd);
-    if (!verifyMessageFormat(packet)) {
-        printw("Invalid message format\n");
-        return 0;
-    }
+    // if (!verifyMessageFormat(packet)) {
+    //     printw("Invalid message format\n");
+    //     return 0;
+    // }
     if (strcmp(packet.content, "ACCEPTED") == 0) {
         printw("\nPassword accepted\n");
         return sockfd;
@@ -343,14 +379,15 @@ int main() {
     ipAddress = serverInfo.ipAddress;
     portNumber = serverInfo.portNumber;
 
+    // struct ThreadArgs args;
+    // args.sockfd = sockfd;
     // pthread_t listenThread;
-    // if (pthread_create(&listenThread, NULL, (void* (*)(void*))printDiagnosticData, (void*)&sockfd) != 0) {
-    //     perror("pthread_create");
-    //     exit(EXIT_FAILURE);
-    // }   
+
+    // Create the thread and pass the arguments
 
     while (running) {
         printMenu();
+        printw("ipAddress: %s\n", ipAddress);
         int choice = getInput()[0] - '0';
         printw("\n%d\n", choice);
 
@@ -358,6 +395,7 @@ int main() {
             case 1:
                 printw("Connecting to server...\n");
                 sockfd = connectToServer(ipAddress, portNumber);
+                // receiveMessages(sockfd);
                 break;
             case 2:
                 printw("Starting the server...\n");
@@ -367,6 +405,10 @@ int main() {
                     printw("The server is already running\n");
                 } else {
                     serverRunning = startServer(sockfd);
+                    // if (pthread_create(&listenThread, NULL, receiveMessages, (void*)&args) != 0) {
+                    //     perror("pthread_create");
+                    //     exit(EXIT_FAILURE);
+                    // }
                 }
                 break;
             case 3:
