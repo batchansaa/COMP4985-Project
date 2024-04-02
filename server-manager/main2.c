@@ -9,13 +9,11 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#define MAX_MESSAGE_LENGTH 1024
-#define CURRENT_VERSION 1
-#define BUFFER_SIZE 100
-
-//TODO: Create a thread for continuously receiving messages from the server (diagnostic data)
-
-//compile with gcc -o main main1.c -lncurses
+#define MAX_MESSAGE_LENGTH 1024        // Buffer length
+#define CURRENT_VERSION 1              // Current version of the protocol
+#define PASSWORD_ACCEPTED "ACCEPTED"   // Password accepted message
+#define SERVER_STARTED "STARTED"       // Server started message
+#define SERVER_STOPPED "STOPPED"       // Server stopped message
 
 typedef struct {
     char* ipAddress;
@@ -28,18 +26,28 @@ typedef struct {
     char *content;
 } Packet;
 
+struct SharedData {
+    pthread_mutex_t mutex;
+    pthread_cond_t condVar;
+    pthread_cond_t diagnosticDataCond;
+    int diagnosticDataFlag;
+    int newDataFlag;
+    char newData[MAX_MESSAGE_LENGTH]; // Adjust buffer size as needed
+};
+
 struct ThreadArgs {
     int sockfd;
+    struct SharedData *sharedData;
 };
 
 bool checkIPAddress(char *ipAddress);
 bool verifyMessageFormat(Packet packet);
-void sendToServer(int sockfd, char *message);
-int connectToServer(char *ipAddress, int portNumber);
 bool startServer(int sockfd);
 bool stopServer(int sockfd);
 char* getInput();
 void printMenu();
+void sendToServer(int sockfd, char *message);
+int connectToServer(char *ipAddress, int portNumber);
 Packet receiveFromServer(int sockfd);
 ServerInfo getSocketInformation();
 
@@ -47,54 +55,58 @@ void* listenToServer(void* arg) {
     /**
      * Listen to the server for diagnostic data
     */
-    int sockfd = *((int*)arg);
-    while (true) {
+
+    struct ThreadArgs *args = (struct ThreadArgs *)arg;
+    int sockfd = args->sockfd;
+    struct SharedData *sharedData = args->sharedData;
+    char buffer[1024]; // Adjust buffer size as needed
+    int bytesReceived;
+
+    while (1) {
         Packet packet = receiveFromServer(sockfd);
-        // if (verifyMessageFormat(packet)) {
+        pthread_mutex_lock(&sharedData->mutex);
+        strncpy(sharedData->newData, packet.content, sizeof(sharedData->newData));
+        sharedData->newDataFlag = 1; // Set the flag to indicate new data
+        pthread_cond_signal(&sharedData->condVar); // Signal the condition variable
+
+        pthread_mutex_unlock(&sharedData->mutex);
+
         if (strcmp(packet.content, "STOPPED") == 0) {
-            printw("Server stopped\n");
+            printw("beep boop Server stopped\n");
         } else if (strcmp(packet.content, "STARTED") == 0) {
-            printw("Server started\n");
+            printw("beep boop Server started\n");
+        } else if (strcmp(packet.content, "ACCEPTED") == 0) {
+            printw("beep boop Password accepted\n");
         } else {
             printw("Received diagnostic data: %s\n", packet.content);
         }
-        // }
+        sharedData->newDataFlag = 0;
+        sharedData->diagnosticDataFlag = 0;
+        sharedData->newData[0] = '\0';
     }
+    pthread_exit(NULL);
 }
 
-// void printDiagnosticData(void* arg) {
-//     /**
-//      * Print the diagnostic data from the server
-//     */
-//     int sockfd = *((int*)arg);
-//     bool serverRunning = true;
-//     while (serverRunning) {
-//         Packet packet = receiveFromServer(sockfd);
-//         // Process the received packet or perform diagnostic data handling here
-//         // For example:
-//         if (verifyMessageFormat(packet)) {
-//             printw("Received diagnostic data: %s\n", packet.content);
-//         }
-//     }
-//     pthread_exit(NULL);
-// }
-
-void receiveMessages(int sockfd) {
+void* printToScreen(void* arg) {
     /**
-     * Receive messages from the server
-     * @param sockfd: The socket file descriptor
+     * Print the diagnostic data to the screen
     */
+    struct ThreadArgs *args = (struct ThreadArgs *)arg;
+    struct SharedData *sharedData = args->sharedData;
     while (1) {
-        Packet packet = receiveFromServer(sockfd);
-        if (!verifyMessageFormat(packet)) {
-            printw("Invalid message format\n");
-            break;
-        } 
-        printw("Received message: %s\n", packet.content);
+        pthread_mutex_lock(&sharedData->mutex);
+        while (sharedData->diagnosticDataFlag == 0) {
+            pthread_cond_wait(&sharedData->condVar, &sharedData->mutex);
+        }
+        printw("Received diagnostic data: %s\n", sharedData->newData);
         refresh();
+        sharedData->newDataFlag = 0;
+        sharedData->newData[0] = '\0';
+        pthread_mutex_unlock(&sharedData->mutex);
     }
-}
+    pthread_exit(NULL);
 
+}
 
 bool verifyMessageFormat(Packet packet) {
     /**
@@ -144,7 +156,7 @@ void sendToServer(int sockfd, char *message) {
     send(sockfd, &version_packet, sizeof(version_packet), 0);
 
     // Create the content length packet
-    uint16_t content_length_packet = htons(strlen(message));
+    uint16_t content_length_packet = strlen(message);
     send(sockfd, &content_length_packet, sizeof(content_length_packet), 0);
 
     // Create the content packet
@@ -188,18 +200,17 @@ Packet receiveFromServer(int sockfd) {
         close(sockfd);
         exit(EXIT_FAILURE);
     }
-    
+    printw("Content: %s\n", packet.content);
+
     // Receive the content packet
     if (recv(sockfd, packet.content, packet.contentLength, 0) <= 0) {
         perror("recv33");
         close(sockfd);
         free(packet.content);
         exit(EXIT_FAILURE);
-    } else {
-        printw("Content: %s\n", packet.content);
-        packet.content[packet.contentLength] = '\0';
     }
-    
+    packet.content[packet.contentLength] = '\0';
+
     return packet;
 }
 
@@ -207,13 +218,13 @@ int connectToServer(char *ipAddress, int portNumber) {
     /**
      * Connect to the server at the given IP address
      * @param ipAddress: The IP address of the server
-     * @return: 0 if the connection was successful, -1 otherwise
+     * @return: sockfd if successful, 0 otherwise
     */
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd == -1) {
         perror("socket");
-        return -1;
+        return 0;
     }
 
     struct sockaddr_in server_addr;
@@ -222,78 +233,17 @@ int connectToServer(char *ipAddress, int portNumber) {
     if (inet_pton(AF_INET, ipAddress, &(server_addr.sin_addr)) <= 0) {
         perror("inet_pton");
         close(sockfd);
-        return -1;
+        return 0;
     }
 
     if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) == -1) {
         perror("connect");
         close(sockfd);
-        return -1;
+        return 0;
     }
 
     printw("Connection successful\n");
-    printw("Enter the password for the server: ");
-    char *password = getInput();
-    sendToServer(sockfd, password);
-    Packet packet = receiveFromServer(sockfd);
-    // if (!verifyMessageFormat(packet)) {
-    //     printw("Invalid message format\n");
-    //     return 0;
-    // }
-    if (strcmp(packet.content, "ACCEPTED") == 0) {
-        printw("\nPassword accepted\n");
-        return sockfd;
-    } else {
-        printw("Password rejected\n");
-        return 0;
-    }
-}
-
-bool startServer(int sockfd) {
-    /**
-     * Start the server
-     * @param sockfd: The socket file descriptor
-    */
-
-    sendToServer(sockfd, "/s");
-
-    // Receive the server status
-    Packet packet = receiveFromServer(sockfd);
-    // if (!verifyMessageFormat(packet)) {
-    //     printw("Invalid message format\n");
-    //     return false;
-    // }
-    if (strcmp(packet.content, "STARTED") == 0) {
-        printw("Server started successfully\n");
-        return true;
-    } else {
-        printw("Server failed to start\n");
-        return false;
-    }
-}
-
-bool stopServer(int sockfd) {
-    /**
-     * Stop the server
-     * @param sockfd: The socket file descriptor
-    */
-
-    // Send the stop server command
-    sendToServer(sockfd, "/q");
-
-    // Receive the server status
-    Packet packet = receiveFromServer(sockfd);
-    // if (!verifyMessageFormat(packet)) {
-    //     printw("Invalid message format\n");
-    //     return true;
-    // }
-    if (strcmp(packet.content, "STOPPED") == 0) {
-        printw("Server stopped successfully\n");
-        return false;
-    } else {
-        printw("Server failed to stop\n");
-        return true;
-    }
+    return sockfd;
 }
 
 char* getInput() {
@@ -331,7 +281,7 @@ void printMenu() {
     /**
      * Print the menu options
     */
-    printw("1. Connect to server\n");           
+    printw("\n1. Connect to server\n");           
     printw("2. Start the server\n");      
     printw("3. Stop the server\n"); 
     printw("4. Exit the program\n");                    
@@ -378,30 +328,60 @@ int main() {
     ServerInfo serverInfo;
     bool running = true;
     bool serverRunning = false;
+    pthread_t listenThread;
+    pthread_t printThread;
+
+    struct SharedData sharedData;
+    pthread_mutex_init(&sharedData.mutex, NULL);
+    pthread_cond_init(&sharedData.condVar, NULL);
+    sharedData.newDataFlag = 0;
+
 
     printw("COMP 4985 Project: Server Manager Program\n");
     
     serverInfo = getSocketInformation();
     ipAddress = serverInfo.ipAddress;
     portNumber = serverInfo.portNumber;
+    sockfd = connectToServer(ipAddress, portNumber);
 
-    // struct ThreadArgs args;
-    // args.sockfd = sockfd;
-    // pthread_t listenThread;
-
-    // Create the thread and pass the arguments
+    if (sockfd != 0) {
+        printw("\nTalking with server.\n");
+        struct ThreadArgs args;
+        args.sockfd = sockfd;
+        args.sharedData = &sharedData; // Pass a pointer to sharedData to the listening thread
+        if (pthread_create(&listenThread, NULL, (void* (*)(void*))listenToServer, (void *)&args) != 0) {
+            perror("pthread_create");
+            exit(EXIT_FAILURE);
+        } else {
+            printw("Listening thread created\n");
+            pthread_create(&printThread, NULL, (void* (*)(void*))printToScreen, (void *)&args);
+        }
+    }  
 
     while (running) {
         printMenu();
-        printw("ipAddress: %s\n", ipAddress);
         int choice = getInput()[0] - '0';
-        printw("\n%d\n", choice);
 
         switch(choice) {
             case 1:
                 printw("Connecting to server...\n");
-                sockfd = connectToServer(ipAddress, portNumber);
-                // receiveMessages(sockfd);
+                printw("Enter the password for the server: ");
+                char *password = getInput();
+                sendToServer(sockfd, password);
+                pthread_mutex_lock(&sharedData.mutex);
+                printw("Flag value: %d\n", sharedData.newDataFlag);
+                while (sharedData.newDataFlag == 0) {
+                    pthread_cond_wait(&sharedData.condVar, &sharedData.mutex);
+                }
+                if (sharedData.newDataFlag) {
+                    if (strcmp(sharedData.newData, "ACCEPTED") == 0) {
+                        printw("Password accepted\n");
+                    } else {
+                        printw("Password rejected\n");
+                    }
+                    sharedData.newDataFlag = 0;
+                }
+                pthread_mutex_unlock(&sharedData.mutex);
                 break;
             case 2:
                 printw("Starting the server...\n");
@@ -410,11 +390,21 @@ int main() {
                 } else if (serverRunning) {
                     printw("The server is already running\n");
                 } else {
-                    serverRunning = startServer(sockfd);
-                    // if (pthread_create(&listenThread, NULL, receiveMessages, (void*)&args) != 0) {
-                    //     perror("pthread_create");
-                    //     exit(EXIT_FAILURE);
-                    // }
+                    sendToServer(sockfd, "/s");
+                    pthread_mutex_lock(&sharedData.mutex);
+                    while (sharedData.newDataFlag == 0) {
+                        pthread_cond_wait(&sharedData.condVar, &sharedData.mutex);
+                    }
+                    if (sharedData.newDataFlag) {
+                        if (strcmp(sharedData.newData, "STARTED") == 0) {
+                            printw("Server started\n");
+                            serverRunning = true;
+                        } else {
+                            printw("Server failed to start\n");
+                        }
+                        sharedData.newDataFlag = 0;
+                    }
+                    pthread_mutex_unlock(&sharedData.mutex);
                 }
                 break;
             case 3:
@@ -425,7 +415,21 @@ int main() {
                     printw("The server is already stopped\n");
                 } 
                 else {
-                    serverRunning = stopServer(sockfd);
+                    sendToServer(sockfd, "/q");
+                    pthread_mutex_lock(&sharedData.mutex);
+                    while (sharedData.newDataFlag == 0) {
+                        pthread_cond_wait(&sharedData.condVar, &sharedData.mutex);
+                    }
+                    if (sharedData.newDataFlag) {
+                        if (strcmp(sharedData.newData, "STOPPED") == 0) {
+                            printw("Server stopped\n");
+                            serverRunning = false;
+                        } else {
+                            printw("Server failed to stop\n");
+                        }
+                        sharedData.newDataFlag = 0;
+                    }
+                    pthread_mutex_unlock(&sharedData.mutex);
                 }
                 break;
             case 4:
@@ -433,6 +437,9 @@ int main() {
                 close(sockfd);
                 sockfd = 0;
                 free(ipAddress);
+                pthread_join(listenThread, NULL);
+                pthread_mutex_destroy(&sharedData.mutex);
+                pthread_cond_destroy(&sharedData.condVar);
                 running = false;
                 break;
             default:

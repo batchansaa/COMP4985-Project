@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #define PORT 8080
 #define DIAGNOSTIC_INTERVAL 5
@@ -46,7 +47,11 @@ Packet receivePacket(int client_socket) {
     return packet;
 }
 
-void sendDiagnosticData(int sockfd) {
+void* sendDiagnostic(void* arg) {
+    // sleep for a minute
+    int sockfd = *((int*)arg);
+    sleep(40);
+
     while (true) {
         // Create and send the diagnostic packet
         Packet packet;
@@ -60,6 +65,8 @@ void sendDiagnosticData(int sockfd) {
         // Sleep for the specified interval
         sleep(DIAGNOSTIC_INTERVAL);
     }
+    pthread_exit(NULL);
+
 }
 
 void sendPacket(int client_socket, char* content) {
@@ -97,7 +104,10 @@ void handleClient(int client_socket) {
     packet = receivePacket(client_socket);
     char *password = packet.content;
     sendPacket(client_socket, "ACCEPTED");
-    // sendDiagnosticData(client_socket);
+
+    int sockfd = client_socket;
+    pthread_t diagnostic_thread;
+    pthread_create(&diagnostic_thread, NULL, sendDiagnostic, &sockfd);
 
     while (1) {
         
