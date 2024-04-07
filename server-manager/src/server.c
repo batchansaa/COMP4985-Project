@@ -50,7 +50,7 @@ Packet receivePacket(int client_socket) {
 void* sendDiagnostic(void* arg) {
     // sleep for a minute
     int sockfd = *((int*)arg);
-    sleep(40);
+    sleep(30);
 
     while (true) {
         // Create and send the diagnostic packet
