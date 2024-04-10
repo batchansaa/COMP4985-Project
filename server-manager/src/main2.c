@@ -51,6 +51,7 @@ struct SharedData
     char            newData[MAX_MESSAGE_LENGTH];    // Adjust buffer size as needed
     bool            running;
 };
+
 struct ThreadArgs
 {
     int                sockfd;
@@ -65,13 +66,9 @@ char      *getInput(void);
 void       printMenu(void);
 void       sendToServer(int sockfd, const char *message);
 void      *listenToServer(void *arg);
-void      *printToScreen(void *arg);
 int        connectToServer(char *ipAddress, int portNumber);
 Packet     receiveFromServer(int sockfd);
 ServerInfo getSocketInformation(void);
-
-pthread_mutex_t ncurses_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 
 void *listenToServer(void *arg)
 {
@@ -86,7 +83,7 @@ void *listenToServer(void *arg)
     while(sharedData->running)
     {
         Packet packet = receiveFromServer(sockfd);
-        if (packet.version == 0)
+        if(packet.version == 0)
         {
             printw("Thread function: exiting.\n");
             break;
@@ -112,12 +109,14 @@ void *listenToServer(void *arg)
             sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
             pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
         }
-        else if ((strstr(packet.content, "/d") != NULL))
+        else if((strstr(packet.content, "/d") != NULL))
         {
             printw("Diagnosic: %s\n", packet.content);
             refresh();
             printMenu();
-        } else {
+        }
+        else
+        {
             printw("Thread function: From server: %s\n", packet.content);
             sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
             pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
@@ -125,31 +124,6 @@ void *listenToServer(void *arg)
         pthread_mutex_unlock(&sharedData->mutex);
     }
     pthread_exit(NULL);
-}
-
-void *printToScreen(void *arg)
-{
-    /**
-     * Print the diagnostic data to the screen
-     */
-
-    printw("Print to screen thread is here!\n");
-    refresh();
-    struct ThreadArgs *args       = (struct ThreadArgs *)arg;
-    struct SharedData *sharedData = args->sharedData;
-    while(1)
-    {
-        pthread_mutex_lock(&sharedData->mutex);
-        while(sharedData->diagnosticDataFlag == 0)
-        {
-            pthread_cond_wait(&sharedData->diagnosticDataCond, &sharedData->mutex);
-        }
-        printw("Received diagnostic data 0000: %s\n", sharedData->newData);
-        refresh();
-        sharedData->diagnosticDataFlag = 0;
-        sharedData->newData[0]         = '\0';
-        pthread_mutex_unlock(&sharedData->mutex);
-    }
 }
 
 bool verifyMessageFormat(Packet packet)
@@ -201,7 +175,6 @@ void sendToServer(int sockfd, const char *message)
     // Create the content packet
     send(sockfd, message, strlen(message), 0);
     printw("Debug: Sending content: %s\n", message);
-
 }
 
 Packet receiveFromServer(int sockfd)
@@ -211,45 +184,50 @@ Packet receiveFromServer(int sockfd)
     uint16_t contentLength;
 
     // Receive the version packet
-    if (recv(sockfd, &version, sizeof(version), 0) <= 0) {
-        close(sockfd);
-        packet.version = 0;
-        packet.contentLength = 0;
-        packet.content = NULL;
-        return packet;
-    }
-    else {
+    if(recv(sockfd, &version, sizeof(version), 0) > 0)
+    {
         packet.version = version;
         printw("\nDebug: Received version: %d\n", packet.version);
     }
-
-    // Receive the content length packet
-    if (recv(sockfd, &contentLength, sizeof(contentLength), 0) <= 0) {
+    else
+    {
         close(sockfd);
-        packet.version = 0;
+        packet.version       = 0;
         packet.contentLength = 0;
-        packet.content = NULL;
+        packet.content       = NULL;
         return packet;
     }
-    else {
+
+    // Receive the content length packet
+    if(recv(sockfd, &contentLength, sizeof(contentLength), 0) > 0)
+    {
         packet.contentLength = ntohs(contentLength);
         printw("Debug: Received Content Length: %d\n", packet.contentLength);
+    }
+    else
+    {
+        close(sockfd);
+        packet.version       = 0;
+        packet.contentLength = 0;
+        packet.content       = NULL;
+        return packet;
     }
 
     // Allocate memory for the content
     packet.content = (char *)malloc(packet.contentLength + 1);
 
     // Receive the content packet
-    if (recv(sockfd, packet.content, packet.contentLength, 0) <= 0) {
+    if(recv(sockfd, packet.content, packet.contentLength, 0) <= 0)
+    {
         // Silent cleanup without printing error messages
         close(sockfd);
         free(packet.content);
-        packet.version = 0;  // Indicate failure or closed socket
+        packet.version       = 0;    // Indicate failure or closed socket
         packet.contentLength = 0;
-        packet.content = NULL;
+        packet.content       = NULL;
         return packet;
     }
-    
+
     printw("Debug: Received Content: %s\n", packet.content);
 
     return packet;
@@ -318,7 +296,7 @@ char *getInput(void)
         if(ch != ERR && ch != '\n')
         {
             if(ch == KEY_BACKSPACE || ch == ASCII_BACKSPACE || ch == ASCII_DELETE)
-            { 
+            {
                 if(index > 0)
                 {
                     index--;
@@ -327,7 +305,7 @@ char *getInput(void)
                 }
             }
             else if(index < BUFFER_SIZE - 1)
-            {    
+            {
                 input[index++] = (char)ch;
                 printw("%c", ch);
                 refresh();
@@ -364,7 +342,6 @@ ServerInfo getSocketInformation(void)
     char      *ipAddress;
     bool       isValidAddress;
     char      *portNumberStr;
-    bool       isValidPort;  
     int        portNumber = 0;
     char      *endPtr;
     long int   portValue;
@@ -375,20 +352,20 @@ ServerInfo getSocketInformation(void)
         printw("Enter the server IP address: ");
         ipAddress      = getInput();
         isValidAddress = checkIPAddress(ipAddress);
-        if(isValidAddress)
+        if(!isValidAddress)
+        {
+            printw("\nThe IP address %s is not a valid IP address.\n", ipAddress);
+        }
+        else
         {
             printw("\nThe IP address %s is a valid IP address.\n", ipAddress);
             serverInfo.ipAddress = ipAddress;
             break;
         }
-        else
-        {
-            printw("\nThe IP address %s is not a valid IP address.\n", ipAddress);
-        }
     }
 
     // Get the port number
-    while (1)
+    while(1)
     {
         printw("Enter the port number: ");
         portNumberStr = getInput();
@@ -404,12 +381,11 @@ ServerInfo getSocketInformation(void)
         else
         {
             printw("The port number %d is a valid port number.\n", (int)portValue);
-            portNumber = (int)portValue;
+            portNumber            = (int)portValue;
             serverInfo.portNumber = portNumber;
             break;
         }
     }
-
     free(portNumberStr);
     return serverInfo;
 }
@@ -580,8 +556,8 @@ int main(void)
                 pthread_mutex_lock(&sharedData.mutex);
                 sharedData.running = false;
                 pthread_mutex_unlock(&sharedData.mutex);
+                // free(ipAddress);
                 close(sockfd);
-                free(ipAddress);
                 pthread_mutex_destroy(&sharedData.mutex);
                 pthread_cond_destroy(&sharedData.condVar);
                 running = false;
