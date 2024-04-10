@@ -49,8 +49,8 @@ struct SharedData
     int             diagnosticDataFlag;
     int             newDataFlag;
     char            newData[MAX_MESSAGE_LENGTH];    // Adjust buffer size as needed
+    bool            running;
 };
-
 struct ThreadArgs
 {
     int                sockfd;
@@ -70,6 +70,9 @@ int        connectToServer(char *ipAddress, int portNumber);
 Packet     receiveFromServer(int sockfd);
 ServerInfo getSocketInformation(void);
 
+pthread_mutex_t ncurses_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
 void *listenToServer(void *arg)
 {
     /**
@@ -80,7 +83,7 @@ void *listenToServer(void *arg)
     int                sockfd     = args->sockfd;
     struct SharedData *sharedData = args->sharedData;
 
-    while(1)
+    while(sharedData->running)
     {
         Packet packet = receiveFromServer(sockfd);
         pthread_mutex_lock(&sharedData->mutex);
@@ -88,30 +91,35 @@ void *listenToServer(void *arg)
 
         if((strcmp(packet.content, "STOPPED") == 0 || strcmp(packet.content, "STOPPED\n") == 0))
         {
-            printw("beep boop Server stopped\n");
+            printw("Thread function: Server stopped\n");
             sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
             pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
         }
         else if((strcmp(packet.content, "STARTED") == 0 || strcmp(packet.content, "STARTED\n") == 0))
         {
-            printw("beep boop Server started\n");
+            printw("Thread function: Server started\n");
             sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
             pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
         }
         else if((strcmp(packet.content, "ACCEPTED") == 0) || (strcmp(packet.content, "ACCEPTED\n") == 0))
         {
-            printw("beep boop Password accepted\n");
+            printw("Thread function: Password accepted\n");
             sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
             pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
         }
-        else
+        else if ((strstr(packet.content, "/d") != NULL))
         {
-            printw("\nFrom Server: %s\n", packet.content);
-            // sharedData->diagnosticDataFlag = 1;    // Set the flag to indicate new data
-            // pthread_cond_signal(&sharedData->diagnosticDataCond);    // Signal the condition variable
+            printw("Diagnosic: %s\n", packet.content);
+            refresh();
+            printMenu();
+        } else {
+            printw("Thread function: From server: %s\n", packet.content);
+            sharedData->newDataFlag = 1;                  // Set the flag to indicate new data
+            pthread_cond_signal(&sharedData->condVar);    // Signal the condition variable
         }
         pthread_mutex_unlock(&sharedData->mutex);
     }
+    pthread_exit(NULL);
 }
 
 void *printToScreen(void *arg)
@@ -176,81 +184,67 @@ void sendToServer(int sockfd, const char *message)
     uint8_t  version_packet;
     uint16_t content_length_packet;
 
-    printw("Debug:Sending message: %s\n", message);
-
     // Create the version packet
     version_packet = (uint8_t)CURRENT_VERSION;
     send(sockfd, &version_packet, sizeof(version_packet), 0);
-    printw("Debug:Version packet: %d\n", version_packet);
-
-    // Create the content length packet
-    // printw("Debug:Content length packet: %d\n", strlen(message));
+    printw("Debug: Sending version: %d\n", version_packet);
 
     content_length_packet = htons(strlen(message));
     send(sockfd, &content_length_packet, sizeof(content_length_packet), 0);
-    printw("Debug:Content length packet: %d\n", content_length_packet);
+    printw("Debug: Sending length: %d\n", content_length_packet);
 
     // Create the content packet
     send(sockfd, message, strlen(message), 0);
-    printw("Debug:Content packet: %s\n", message);
+    printw("Debug: Sending content: %s\n", message);
 
 }
 
 Packet receiveFromServer(int sockfd)
 {
-    /**
-     * Receive the password acknowledgement from the server
-     * sockfd: The socket file descriptor
-     */
     Packet   packet;
     uint8_t  version;
     uint16_t contentLength;
 
     // Receive the version packet
-    printw("Receiving packet... HAAHAHA\n");
-    if(recv(sockfd, &version, sizeof(version), 0) <= 0)
-    {
-        printw("Error receiving version packet\n");
-        perror("recv11");
+    if (recv(sockfd, &version, sizeof(version), 0) <= 0) {
         close(sockfd);
-        exit(EXIT_FAILURE);
+        packet.version = 0;
+        packet.contentLength = 0;
+        packet.content = NULL;
+        return packet;
     }
-    else
-    {
+    else {
         packet.version = version;
-        printw("Debug: Received version: %d\n", packet.version);
+        printw("\nDebug: Received version: %d\n", packet.version);
     }
 
     // Receive the content length packet
-    if(recv(sockfd, &contentLength, sizeof(contentLength), 0) <= 0)
-    {
-        perror("recv22");
+    if (recv(sockfd, &contentLength, sizeof(contentLength), 0) <= 0) {
         close(sockfd);
-        exit(EXIT_FAILURE);
+        packet.version = 0;
+        packet.contentLength = 0;
+        packet.content = NULL;
+        return packet;
     }
-    else
-    {
+    else {
         packet.contentLength = ntohs(contentLength);
         printw("Debug: Received Content Length: %d\n", packet.contentLength);
     }
 
     // Allocate memory for the content
     packet.content = (char *)malloc(packet.contentLength + 1);
-    if(packet.content == NULL)
-    {
-        perror("malloc");
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
+
     // Receive the content packet
-    if(recv(sockfd, packet.content, packet.contentLength, 0) <= 0)
-    {
-        perror("recv33");
+    if (recv(sockfd, packet.content, packet.contentLength, 0) <= 0) {
+        // Silent cleanup without printing error messages
         close(sockfd);
         free(packet.content);
-        exit(EXIT_FAILURE);
+        packet.version = 0;  // Indicate failure or closed socket
+        packet.contentLength = 0;
+        packet.content = NULL;
+        return packet;
     }
-    packet.content[packet.contentLength] = '\0';
+    
     printw("Debug: Received Content: %s\n", packet.content);
 
     return packet;
@@ -299,7 +293,7 @@ char *getInput(void)
      * Get input from the user
      * Return The input string
      */
-    nodelay(stdscr, TRUE);
+    // nodelay(stdscr, TRUE);
 
     char *input;
     int   index = 0;
@@ -316,30 +310,30 @@ char *getInput(void)
     while(1)
     {
         ch = getch();
-        if(ch != ERR && ch != '\n')    // Check if a character was read and it's not newline
+        if(ch != ERR && ch != '\n')
         {
             if(ch == KEY_BACKSPACE || ch == ASCII_BACKSPACE || ch == ASCII_DELETE)
-            {    // Backspace or Delete
+            { 
                 if(index > 0)
                 {
                     index--;
-                    printw("\b \b");    // Move cursor back, print space, move back again (backspace effect)
+                    printw("\b \b");
                     refresh();
                 }
             }
             else if(index < BUFFER_SIZE - 1)
-            {    // Limit input to avoid buffer overflow
+            {    
                 input[index++] = (char)ch;
-                printw("%c", ch);    // Echo the character back to the screen
+                printw("%c", ch);
                 refresh();
             }
         }
         else if(ch == '\n')
         {
-            break;    // Exit the loop when Enter key is pressed
+            break;
         }
     }
-    input[index] = '\0';    // Null-terminate the string
+    input[index] = '\0';
     return input;
 }
 
@@ -348,7 +342,7 @@ void printMenu(void)
     /**
      * Print the menu options
      */
-    printw("\n1. Connect to server\n");
+    printw("1. Connect to server\n");
     printw("2. Start the server\n");
     printw("3. Stop the server\n");
     printw("4. Exit the program\n");
@@ -365,12 +359,12 @@ ServerInfo getSocketInformation(void)
     char      *ipAddress;
     bool       isValidAddress;
     char      *portNumberStr;
+    bool       isValidPort;  
     int        portNumber = 0;
     char      *endPtr;
     long int   portValue;
     ServerInfo serverInfo;
 
-    // Print a message and wait for user input
     while(1)
     {
         printw("Enter the server IP address: ");
@@ -389,23 +383,28 @@ ServerInfo getSocketInformation(void)
     }
 
     // Get the port number
-    printw("Enter the port number: ");
-    portNumberStr = getInput();
-    // Convert the port number to an integer
-    portValue = strtol(portNumberStr, &endPtr, DECIMAL);
+    while (1)
+    {
+        printw("Enter the port number: ");
+        portNumberStr = getInput();
+        // Convert the port number to an integer
+        portValue = strtol(portNumberStr, &endPtr, DECIMAL);
 
-    // Check for conversion errors
-    if(endPtr == portNumberStr || *endPtr != '\0')
-    {
-        // Handle conversion error
-        printw("Error: Invalid port number\n");
+        // Check for conversion errors
+        if(endPtr == portNumberStr || *endPtr != '\0')
+        {
+            // Handle conversion error
+            printw("Error: Invalid port number\n");
+        }
+        else
+        {
+            printw("The port number %d is a valid port number.\n", (int)portValue);
+            portNumber = (int)portValue;
+            serverInfo.portNumber = portNumber;
+            break;
+        }
     }
-    else
-    {
-        portNumber = (int)portValue;
-    }
-    printw("\nYou entered: %d\n", portNumber);
-    serverInfo.portNumber = portNumber;
+
     free(portNumberStr);
     return serverInfo;
 }
@@ -419,23 +418,20 @@ int main(void)
     bool              running       = true;
     bool              serverRunning = false;
     pthread_t         listenThread;
-    pthread_t         printThread;
     struct SharedData sharedData;
     struct ThreadArgs args;
 
     // pthread_t  printThread;
-    // nodelay(stdscr, TRUE);
 
     initscr();               // Initialize the screen
     cbreak();                // Line buffering disabled, Pass on every character
     noecho();                // Don't echo while we do getch
     keypad(stdscr, TRUE);    // Enable keypad input
-    // WINDOW *myWin = newwin(10, 40, 5, 5); // Create a window
-    // scrollok(myWin, TRUE);                // Enable scrolling for the window
 
     pthread_mutex_init(&sharedData.mutex, NULL);
     pthread_cond_init(&sharedData.condVar, NULL);
     sharedData.newDataFlag = 0;
+    sharedData.running     = true;
 
     printw("COMP 4985 Project: Server Manager Program\n");
 
@@ -464,16 +460,6 @@ int main(void)
         printw("Listening thread created\n");
     }
 
-    // if(pthread_create(&printThread, NULL, (void* (*)(void*))printToScreen, (void *)&args) != 0)
-    // {
-    //     perror("pthread_create");
-    //     exit(EXIT_FAILURE);
-    // }
-    // else
-    // {
-    //     printw("Print thread created\n");
-    // }
-
     while(running)
     {
         int   choice;
@@ -486,7 +472,7 @@ int main(void)
         {
             case 1:
             {
-                char *password;    // Declare password variable
+                char *password;
 
                 printw("Connecting to server...\n");
                 printw("Enter the password for the server: ");
@@ -513,7 +499,7 @@ int main(void)
             }
             case 2:
             {
-                printw("Starting the server...\n");
+                printw("\nStarting the server...\n");
                 if(sockfd == 0)
                 {
                     printw("Please connect to the server first\n");
@@ -586,11 +572,12 @@ int main(void)
             case 4:
             {
                 printw("Exiting the program...\n");
+                pthread_mutex_lock(&sharedData.mutex);
+                sharedData.running = false;
+                pthread_mutex_unlock(&sharedData.mutex);
                 close(sockfd);
-                sockfd = 0;
                 free(ipAddress);
                 pthread_kill(listenThread, 0);
-                // pthread_kill(printThread, 0);
                 pthread_mutex_destroy(&sharedData.mutex);
                 pthread_cond_destroy(&sharedData.condVar);
                 running = false;

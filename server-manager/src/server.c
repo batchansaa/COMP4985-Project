@@ -50,17 +50,30 @@ Packet receivePacket(int client_socket) {
 void* sendDiagnostic(void* arg) {
     // sleep for a minute
     int sockfd = *((int*)arg);
-    sleep(30);
+    sleep(20);
 
     while (true) {
         // Create and send the diagnostic packet
-        Packet packet;
-        packet.version = 1;
-        packet.content = "Diagnostic data...";
-        packet.length = strlen(packet.content);
+        // Packet packet;
+        // packet.version = 1;
+        // packet.content = "Diagnostic data...";
+        // packet.length = strlen(packet.content);
 
-        send(sockfd, &packet, sizeof(Packet), 0);
-        printf("Sent diagnostic data: %s\n", packet.content);
+        uint8_t  version_packet;
+        uint16_t content_length_packet;
+
+        // Create the version packet
+        version_packet = (uint8_t)1;
+        send(sockfd, &version_packet, sizeof(version_packet), 0);
+        printf("Debug: Sending version: %d\n", version_packet);
+
+        content_length_packet = htons(strlen("/d 3"));
+        send(sockfd, &content_length_packet, sizeof(content_length_packet), 0);
+        printf("Debug: Sending length: %d\n", content_length_packet);
+
+        // Create the content packet
+        send(sockfd, "/d 3", strlen("/d 3"), 0);
+        printf("Debug: Sending content: %s\n", "/d 3");
 
         // Sleep for the specified interval
         sleep(DIAGNOSTIC_INTERVAL);
@@ -79,16 +92,28 @@ void sendPacket(int client_socket, char* content) {
     printf("Sending packet with length: %d\n", packet.length);
 
     // Send version
-    if (send(client_socket, &packet.version, sizeof(packet.version), 0) == -1) {
-        perror("Send version failed");
-        exit(EXIT_FAILURE);
-    }
+    // if (send(client_socket, &packet.version, sizeof(packet.version), 0) == -1) {
+    //     perror("Send version failed");
+    //     exit(EXIT_FAILURE);
+    // }
 
-    // Send length
-    if (send(client_socket, &packet.length, sizeof(packet.length), 0) == -1) {
-        perror("Send length failed");
-        exit(EXIT_FAILURE);
-    }
+    // // Send length
+    // if (send(client_socket, &packet.length, sizeof(packet.length), 0) == -1) {
+    //     perror("Send length failed");
+    //     exit(EXIT_FAILURE);
+    // }
+
+    uint8_t  version_packet;
+    uint16_t content_length_packet;
+
+    // Create the version packet
+    version_packet = (uint8_t)1;
+    send(client_socket, &version_packet, sizeof(version_packet), 0);
+    printf("Debug: Sending version: %d\n", version_packet);
+
+    content_length_packet = htons(strlen(content));
+    send(client_socket, &content_length_packet, sizeof(content_length_packet), 0);
+    printf("Debug: Sending length: %d\n", content_length_packet);
 
     // Send content
     if (send(client_socket, packet.content, packet.length, 0) == -1) {
@@ -103,7 +128,11 @@ void handleClient(int client_socket) {
     // Receive password packet
     packet = receivePacket(client_socket);
     char *password = packet.content;
-    sendPacket(client_socket, "ACCEPTED");
+    if (strcmp(password, "password") != 0) {
+        sendPacket(client_socket, "DENIED");
+    } else {
+        sendPacket(client_socket, "ACCEPTED");
+    }
 
     int sockfd = client_socket;
     pthread_t diagnostic_thread;
