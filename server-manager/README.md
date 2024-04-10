@@ -1,6 +1,11 @@
-# template-c Repository Guide
+# COMP 4985 Project Guide
 
-Welcome to the `c template` repository. This guide will help you set up and run the provided scripts.
+This server manager project was built for COMP 4985 @ BCIT.
+
+## Authors:
+Batchansaa Batzorig
+
+Alexander Gibbison
 
 ## **Table of Contents**
 
@@ -17,19 +22,29 @@ Welcome to the `c template` repository. This guide will help you set up and run 
 Clone the repository using the following command:
 
 ```bash
-git clone https://github.com/programming101dev/template-c.git
-```
-
-Navigate to the cloned directory:
-
-```bash
-cd template-c
+git clone https://github.com/batchansaa/COMP4985-Project
 ```
 
 Ensure the scripts are executable:
 
 ```bash
 chmod +x *.sh
+```
+
+## ! Note ! - You can run without building the project
+
+If you want to run the server manager program without building the project, you can do the following steps instead.
+
+``` bash
+cd src
+```
+
+``` bash
+gcc main.c -o main -lncurses
+```
+
+``` bash
+./main
 ```
 
 ## **Prerequisites**
@@ -79,22 +94,10 @@ To build the program with all compilers run:
 ./build-all.sh
 ```
 
-## **Copy the template to start a new project**
+## **Running the program**
 
-To create a new project from the template, run:
+To start running the program, write this command in terminal: 
 
 ```bash
-./copy-template.sh <desitnation directory>
+./build/main
 ```
-
-This will copy all of the files needed to start a new project.
-
-1. Edit the files.txt
-2. run ./generate-cmakelists.sh
-3. run ./change-compiler.sh -c <compiler>
-4. run ./build.sh
-
-The files.txt file contains:
-<executable> <source files> <header files> <libraries>
-
-When you need to add/removes files to/from the project you must rerun the 4 steps above. 

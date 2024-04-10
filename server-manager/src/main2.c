@@ -45,8 +45,6 @@ struct SharedData
 {
     pthread_mutex_t mutex;
     pthread_cond_t  condVar;
-    pthread_cond_t  diagnosticDataCond;
-    int             diagnosticDataFlag;
     int             newDataFlag;
     char            newData[MAX_MESSAGE_LENGTH];    // Adjust buffer size as needed
     bool            running;
@@ -73,7 +71,7 @@ ServerInfo getSocketInformation(void);
 void *listenToServer(void *arg)
 {
     /**
-     * Listen to the server for diagnostic data
+     * Listen to the server for any incoming messages
      */
 
     struct ThreadArgs *args       = (struct ThreadArgs *)arg;
@@ -111,7 +109,7 @@ void *listenToServer(void *arg)
         }
         else if((strstr(packet.content, "/d") != NULL))
         {
-            printw("Diagnosic: %s\n", packet.content);
+            printw("----- Diagnosic: %s -----\n\n", packet.content);
             refresh();
             printMenu();
         }
@@ -166,11 +164,12 @@ void sendToServer(int sockfd, const char *message)
     // Create the version packet
     version_packet = (uint8_t)CURRENT_VERSION;
     send(sockfd, &version_packet, sizeof(version_packet), 0);
-    printw("Debug: Sending version: %d\n", version_packet);
+    printw("\nDebug: Sending version: %d\n", version_packet);
 
     content_length_packet = htons(strlen(message));
-    send(sockfd, &content_length_packet, sizeof(content_length_packet), 0);
-    printw("Debug: Sending length: %d\n", content_length_packet);
+    printw("Debug: Sending string length: %d\n", strlen(message));
+    send(sockfd, &content_length_packet, sizeof(uint16_t), 0);
+    printw("Debug: Sending length: %u\n", ntohs(content_length_packet));
 
     // Create the content packet
     send(sockfd, message, strlen(message), 0);
@@ -179,6 +178,9 @@ void sendToServer(int sockfd, const char *message)
 
 Packet receiveFromServer(int sockfd)
 {
+    /**
+     * Receives a packet from the server.
+    */
     Packet   packet;
     uint8_t  version;
     uint16_t contentLength;
@@ -202,7 +204,7 @@ Packet receiveFromServer(int sockfd)
     if(recv(sockfd, &contentLength, sizeof(contentLength), 0) > 0)
     {
         packet.contentLength = ntohs(contentLength);
-        printw("Debug: Received Content Length: %d\n", packet.contentLength);
+        printw("Debug: Received Content Length: %u\n", packet.contentLength);
     }
     else
     {
@@ -228,7 +230,7 @@ Packet receiveFromServer(int sockfd)
         return packet;
     }
 
-    printw("Debug: Received Content: %s\n", packet.content);
+    printw("Debug: Received Content: %s\n\n", packet.content);
 
     return packet;
 }
@@ -280,7 +282,6 @@ char *getInput(void)
 
     char *input;
     int   index = 0;
-    int   ch;
 
     input = (char *)malloc(BUFFER_SIZE * sizeof(char));
 
@@ -292,6 +293,8 @@ char *getInput(void)
 
     while(1)
     {
+        int ch;
+
         ch = getch();
         if(ch != ERR && ch != '\n')
         {
@@ -339,16 +342,15 @@ ServerInfo getSocketInformation(void)
      * Get the IP address and port number of the server
      * Return The server information
      */
-    char      *ipAddress;
-    bool       isValidAddress;
-    char      *portNumberStr;
-    int        portNumber = 0;
+    char *ipAddress;
+    // bool       isValidAddress;
+    // int        portNumber = 0;
     char      *endPtr;
-    long int   portValue;
     ServerInfo serverInfo;
 
     while(1)
     {
+        bool isValidAddress;
         printw("Enter the server IP address: ");
         ipAddress      = getInput();
         isValidAddress = checkIPAddress(ipAddress);
@@ -367,6 +369,9 @@ ServerInfo getSocketInformation(void)
     // Get the port number
     while(1)
     {
+        char    *portNumberStr;
+        long int portValue;
+
         printw("Enter the port number: ");
         portNumberStr = getInput();
         // Convert the port number to an integer
@@ -377,34 +382,33 @@ ServerInfo getSocketInformation(void)
         {
             // Handle conversion error
             printw("Error: Invalid port number\n");
+            free(portNumberStr);
         }
         else
         {
-            printw("The port number %d is a valid port number.\n", (int)portValue);
-            portNumber            = (int)portValue;
-            serverInfo.portNumber = portNumber;
+            free(portNumberStr);
+            printw("\nThe port number %d is a valid port number.\n", (int)portValue);
+            serverInfo.portNumber = (int)portValue;
             break;
         }
     }
-    free(portNumberStr);
     return serverInfo;
 }
 
 int main(void)
 {
+    /**
+     * Main function.
+    */
     int               sockfd;
-    int               portNumber;
-    char             *ipAddress;
-    ServerInfo        serverInfo;
     bool              running       = true;
     bool              serverRunning = false;
     pthread_t         listenThread;
     struct SharedData sharedData;
     struct ThreadArgs args;
 
-    // pthread_t  printThread;
-
     initscr();               // Initialize the screen
+    scrollok(stdscr, TRUE);    // Enable scrolling
     cbreak();                // Line buffering disabled, Pass on every character
     noecho();                // Don't echo while we do getch
     keypad(stdscr, TRUE);    // Enable keypad input
@@ -414,19 +418,21 @@ int main(void)
     sharedData.newDataFlag = 0;
     sharedData.running     = true;
 
-    printw("COMP 4985 Project: Server Manager Program\n");
+    printw("--- COMP 4985 Project: Server Manager Program ---\n");
 
     sockfd = 0;
 
     while(sockfd == 0)
     {
+        int        portNumber;
+        char      *ipAddress;
+        ServerInfo serverInfo;
+
         serverInfo = getSocketInformation();
         ipAddress  = serverInfo.ipAddress;
         portNumber = serverInfo.portNumber;
         sockfd     = connectToServer(ipAddress, portNumber);
     }
-
-    printw("\nTalking with server.\n");
 
     args.sockfd     = sockfd;
     args.sharedData = &sharedData;    // Pass a pointer to sharedData to the listening thread
@@ -434,12 +440,14 @@ int main(void)
     if(pthread_create(&listenThread, NULL, (void *(*)(void *))listenToServer, (void *)&args) != 0)
     {
         perror("pthread_create");
-        exit(EXIT_FAILURE);
     }
     else
     {
         printw("Listening thread created\n");
     }
+
+    printw("----------- Setup is complete. -----------\n");
+
 
     while(running)
     {
@@ -455,23 +463,22 @@ int main(void)
             {
                 char *password;
 
-                printw("Connecting to server...\n");
+                printw("\nConnecting to server...\n");
                 printw("Enter the password for the server: ");
                 password = getInput();
                 sendToServer(sockfd, password);
                 pthread_mutex_lock(&sharedData.mutex);
-                printw("Flag value: %d\n", sharedData.newDataFlag);
                 while(sharedData.newDataFlag == 0)
                 {
                     pthread_cond_wait(&sharedData.condVar, &sharedData.mutex);
                 }
                 if((strcmp(sharedData.newData, "ACCEPTED") == 0) || (strcmp(sharedData.newData, "ACCEPTED\n") == 0))
                 {
-                    printw("Password accepted\n");
+                    printw("-- Password accepted. You may send commands to start/stop the server. --\n\n");
                 }
                 else
                 {
-                    printw("Password rejected\n");
+                    printw("-- Password rejected. Please enter the right credentials. --\n");
                 }
                 sharedData.newDataFlag = 0;
                 pthread_mutex_unlock(&sharedData.mutex);
@@ -501,12 +508,12 @@ int main(void)
                     // {
                     if((strcmp(sharedData.newData, "STARTED") == 0) || (strcmp(sharedData.newData, "STARTED\n") == 0))
                     {
-                        printw("Server started\n");
+                        printw("-- Server started. Server will be accepting incoming client connections. --\n");
                         serverRunning = true;
                     }
                     else
                     {
-                        printw("Server failed to start\n");
+                        printw("-- Server failed to start. Please try again. --\n");
                     }
                     sharedData.newDataFlag = 0;
                     // }
@@ -516,14 +523,14 @@ int main(void)
             }
             case 3:
             {
-                printw("Stopping the server...\n");
+                printw("\nStopping the server...\n");
                 if(sockfd == 0)
                 {
-                    printw("Please connect to the server first\n");
+                    printw("! Please connect to the server first !\n");
                 }
                 else if(!serverRunning)
                 {
-                    printw("The server is already stopped\n");
+                    printw("! The server is already stopped !\n");
                 }
                 else
                 {
@@ -537,12 +544,12 @@ int main(void)
                     // {
                     if((strcmp(sharedData.newData, "STOPPED") == 0) || (strcmp(sharedData.newData, "STOPPED\n") == 0))
                     {
-                        printw("Server stopped\n");
+                        printw("-- Server stopped. Server will not be accepting incoming client connections. --\n");
                         serverRunning = false;
                     }
                     else
                     {
-                        printw("Server failed to stop\n");
+                        printw("-- Server failed to stop. Please try again. --\n");
                     }
                     sharedData.newDataFlag = 0;
                     // }
@@ -552,7 +559,7 @@ int main(void)
             }
             case 4:
             {
-                printw("Exiting the program...\n");
+                printw("\nExiting the program...\n");
                 pthread_mutex_lock(&sharedData.mutex);
                 sharedData.running = false;
                 pthread_mutex_unlock(&sharedData.mutex);
@@ -561,11 +568,12 @@ int main(void)
                 pthread_mutex_destroy(&sharedData.mutex);
                 pthread_cond_destroy(&sharedData.condVar);
                 running = false;
+                printw("-- Cleanup is complete. --\n");
                 break;
             }
             default:
             {
-                printw("Invalid choice\n");
+                printw("\nInvalid choice\n");
             }
         }
         free(input);
