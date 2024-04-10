@@ -86,6 +86,11 @@ void *listenToServer(void *arg)
     while(sharedData->running)
     {
         Packet packet = receiveFromServer(sockfd);
+        if (packet.version == 0)
+        {
+            printw("Thread function: exiting.\n");
+            break;
+        }
         pthread_mutex_lock(&sharedData->mutex);
         strncpy(sharedData->newData, packet.content, sizeof(sharedData->newData));
 
@@ -577,7 +582,6 @@ int main(void)
                 pthread_mutex_unlock(&sharedData.mutex);
                 close(sockfd);
                 free(ipAddress);
-                pthread_kill(listenThread, 0);
                 pthread_mutex_destroy(&sharedData.mutex);
                 pthread_cond_destroy(&sharedData.condVar);
                 running = false;
