@@ -16,8 +16,12 @@
 #define ASCII_BACKSPACE 127        // ASCII value for backspace
 #define ASCII_DELETE 8             // ASCII value for delete
 #define DECIMAL 10                 // Decimal base
+#define MAX_PORT 65535             // Maximum port number
 
-#define RESTRICTED_PORTS {80, 443, 25, 22}
+#define RESTRICTED_PORTS                                                                                                                                                                                                                                           \
+    {                                                                                                                                                                                                                                                              \
+        80, 443, 25, 22                                                                                                                                                                                                                                            \
+    }
 
 // #define PASSWORD_ACCEPTED "ACCEPTED"    // Password accepted message
 // #define SERVER_STARTED "STARTED"        // Server started message
@@ -60,7 +64,7 @@ struct ThreadArgs
 
 bool       checkIPAddress(char *ipAddress);
 bool       verifyMessageFormat(Packet packet);
-bool       isRestrictedPort(int port);
+bool       isRestrictedPort(long port);
 char      *getInput(void);
 void       printMenu(void);
 void       sendToServer(int sockfd, const char *message);
@@ -337,7 +341,7 @@ void printMenu(void)
     refresh();
 }
 
-bool isRestrictedPort(int port)
+bool isRestrictedPort(long port)
 {
     /**
      * Check if the port is restricted
@@ -345,7 +349,7 @@ bool isRestrictedPort(int port)
      * Return True if the port is restricted, False otherwise
      */
     int restrictedPorts[] = RESTRICTED_PORTS;
-    for(int i = 0; i < sizeof(restrictedPorts) / sizeof(restrictedPorts[0]); i++)
+    for(size_t i = 0; i < sizeof(restrictedPorts) / sizeof(restrictedPorts[0]); i++)
     {
         if(port == restrictedPorts[i])
         {
@@ -397,7 +401,7 @@ ServerInfo getSocketInformation(void)
         portValue = strtol(portNumberStr, &endPtr, DECIMAL);
 
         // Check for conversion errors
-        if(endPtr == portNumberStr || *endPtr != '\0' || portValue < 0 || portValue > 65535  || isRestrictedPort(portValue))
+        if(endPtr == portNumberStr || *endPtr != '\0' || portValue < 0 || portValue > MAX_PORT || isRestrictedPort(portValue))
         {
             // Handle conversion error
             printw("\nError: Invalid port number\n");
@@ -440,7 +444,7 @@ int main(void)
 
     printw("--- COMP 4985 Project: Server Manager Program ---\n");
 
-    sockfd = 0;
+    sockfd           = 0;
     passwordAccepted = false;
 
     while(sockfd == 0)
