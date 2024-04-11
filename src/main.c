@@ -17,6 +17,8 @@
 #define ASCII_DELETE 8             // ASCII value for delete
 #define DECIMAL 10                 // Decimal base
 
+#define RESTRICTED_PORTS {80, 443, 25, 22}
+
 // #define PASSWORD_ACCEPTED "ACCEPTED"    // Password accepted message
 // #define SERVER_STARTED "STARTED"        // Server started message
 // #define SERVER_STOPPED "STOPPED"        // Server stopped message
@@ -58,8 +60,7 @@ struct ThreadArgs
 
 bool       checkIPAddress(char *ipAddress);
 bool       verifyMessageFormat(Packet packet);
-bool       startServer(int sockfd);
-bool       stopServer(int sockfd);
+bool       isRestrictedPort(int port);
 char      *getInput(void);
 void       printMenu(void);
 void       sendToServer(int sockfd, const char *message);
@@ -336,6 +337,24 @@ void printMenu(void)
     refresh();
 }
 
+bool isRestrictedPort(int port)
+{
+    /**
+     * Check if the port is restricted
+     * port: The port number to check
+     * Return True if the port is restricted, False otherwise
+     */
+    int restrictedPorts[] = RESTRICTED_PORTS;
+    for(int i = 0; i < sizeof(restrictedPorts) / sizeof(restrictedPorts[0]); i++)
+    {
+        if(port == restrictedPorts[i])
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 ServerInfo getSocketInformation(void)
 {
     /**
@@ -378,10 +397,10 @@ ServerInfo getSocketInformation(void)
         portValue = strtol(portNumberStr, &endPtr, DECIMAL);
 
         // Check for conversion errors
-        if(endPtr == portNumberStr || *endPtr != '\0')
+        if(endPtr == portNumberStr || *endPtr != '\0' || portValue < 0 || portValue > 65535  || isRestrictedPort(portValue))
         {
             // Handle conversion error
-            printw("Error: Invalid port number\n");
+            printw("\nError: Invalid port number\n");
             free(portNumberStr);
         }
         else
@@ -404,6 +423,7 @@ int main(void)
     bool              running       = true;
     bool              serverRunning = false;
     pthread_t         listenThread;
+    bool              passwordAccepted;
     struct SharedData sharedData;
     struct ThreadArgs args;
 
@@ -421,6 +441,7 @@ int main(void)
     printw("--- COMP 4985 Project: Server Manager Program ---\n");
 
     sockfd = 0;
+    passwordAccepted = false;
 
     while(sockfd == 0)
     {
@@ -474,6 +495,7 @@ int main(void)
                 if((strcmp(sharedData.newData, "ACCEPTED") == 0) || (strcmp(sharedData.newData, "ACCEPTED\n") == 0))
                 {
                     printw("-- Password accepted. You may send commands to start/stop the server. --\n\n");
+                    passwordAccepted = true;
                 }
                 else
                 {
@@ -487,13 +509,13 @@ int main(void)
             case 2:
             {
                 printw("\nStarting the server...\n");
-                if(sockfd == 0)
+                if(!passwordAccepted)
                 {
-                    printw("Please connect to the server first\n");
+                    printw("Please connect to the server first!\n");
                 }
                 else if(serverRunning)
                 {
-                    printw("The server is already running\n");
+                    printw("The server is already running!\n");
                 }
                 else
                 {
@@ -523,13 +545,13 @@ int main(void)
             case 3:
             {
                 printw("\nStopping the server...\n");
-                if(sockfd == 0)
+                if(!passwordAccepted)
                 {
-                    printw("! Please connect to the server first !\n");
+                    printw("Please connect to the server first !\n");
                 }
                 else if(!serverRunning)
                 {
-                    printw("! The server is already stopped !\n");
+                    printw("The server is already stopped !\n");
                 }
                 else
                 {
@@ -539,8 +561,6 @@ int main(void)
                     {
                         pthread_cond_wait(&sharedData.condVar, &sharedData.mutex);
                     }
-                    // if(sharedData.newDataFlag)
-                    // {
                     if((strcmp(sharedData.newData, "STOPPED") == 0) || (strcmp(sharedData.newData, "STOPPED\n") == 0))
                     {
                         printw("-- Server stopped. Server will not be accepting incoming client connections. --\n");
